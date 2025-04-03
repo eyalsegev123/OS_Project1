@@ -126,4 +126,9 @@ sys_waitall(void)
 {
   uint64 n;
   uint64 statuses;
+
+  argaddr(0, &n);
+  argaddr(1, &statuses);
+
+  return waitall((int*)n, (int*)statuses);
 }

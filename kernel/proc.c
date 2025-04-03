@@ -736,7 +736,7 @@ forkn(int n, int* pids)
     safestrcpy(np->name, p->name, sizeof(p->name));
 
     // Store PID in user-provided array
-    if(copyout(p->pagetable, (uint64)&pids[i], (char*)&np->pid, sizeof(np->pid)) < 0) {
+    if(pids!=0 && copyout(p->pagetable, (uint64)&pids[i], (char*)&np->pid, sizeof(np->pid)) < 0) {
       freeproc(np);
       release(&np->lock);
       goto cleanup;
@@ -784,3 +784,128 @@ cleanup:
   
   return -1;
 }
+
+
+int
+waitall(int *n, int *statuses)
+{
+  struct proc *pp;
+  int havekids = 0;
+  struct proc *p = myproc();
+  int finished_children = 0;
+  int num_of_children = 0;
+  int temp_statuses[NPROC];
+  
+  acquire(&wait_lock);
+
+  // First count how many children we have
+  for(pp = proc; pp < &proc[NPROC]; pp++) {
+    if(pp->parent == p) {
+      num_of_children++;
+      havekids = 1;
+    }
+  }
+  
+  // If no children, set n to 0 and return
+  if(!havekids) {
+    if(n != 0 && copyout(p->pagetable, (uint64)n, (char *)&finished_children,
+                          sizeof(finished_children)) < 0) {
+      release(&wait_lock);
+      return -1;                              
+    }
+    release(&wait_lock);
+    return 0;
+  }
+
+  for(;;) {
+    // Reset counter for this scan
+    finished_children = 0;
+    
+    // Scan for zombie children
+    for(pp = proc; pp < &proc[NPROC]; pp++) {
+      if(pp->parent == p) {
+        acquire(&pp->lock);
+        if(pp->state == ZOMBIE) {
+          // Save exit status
+          temp_statuses[finished_children] = pp->xstate;
+          
+          // Free the process
+          freeproc(pp);
+          release(&pp->lock);
+          
+          finished_children++;
+        } else {
+          release(&pp->lock);
+        }
+      }
+    }
+
+    // Check if all children have exited
+    if(finished_children == num_of_children) {
+      // Copy results to user space
+      if(n != 0 && copyout(p->pagetable, (uint64)n, (char *)&finished_children,
+                            sizeof(finished_children)) < 0) {
+        release(&wait_lock);
+        return -1;                              
+      }
+
+      // Copy statuses to user space
+      if(statuses != 0 && copyout(p->pagetable, (uint64)statuses, (char *)temp_statuses,
+                                  finished_children * sizeof(int)) < 0) {
+        release(&wait_lock);
+        return -1;
+      }
+      
+      release(&wait_lock);
+      return 0;
+    }
+
+    // Not all children have exited
+    if(killed(p)) {
+      release(&wait_lock);
+      return -1;
+    }
+    
+    // Wait for children to exit
+    sleep(p, &wait_lock);
+  }
+}
+
+// Per-CPU process scheduler.
+// Each CPU calls scheduler() after setting itself up.
+// Scheduler never returns.  It loops, doing:
+//  - choose a process to run.
+//  - swtch to start running that process.
+//  - eventually that process transfers control
+//    via swtch back to the scheduler.
+void
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  
+  c->proc = 0;
+  for(;;){
+    // Avoid deadlock by ensuring that devices can interrupt.
+    intr_on();
+
+    for(p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if(p->state == RUNNABLE) {
+        // Switch to chosen process.  It is the process's job
+        // to release its lock and then reacquire it
+        // before jumping back to us.
+        p->state = RUNNING;
+        c->proc = p;
+        swtch(&c->context, &p->context);
+
+        // Process is done running for now.
+        // It should have changed its p->state before coming back.
+        c->proc = 0;
+      }
+      release(&p->lock);
+    }
+  }
+}
+
+
