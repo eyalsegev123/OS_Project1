@@ -6,5 +6,5 @@ int
 main()
 {
   write(1, "Hello World xv6\n", 17);
-  exit(0);
+  exit(0 , "");
 }

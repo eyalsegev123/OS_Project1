@@ -8,5 +8,5 @@ int main() {
     printf("After malloc: %d bytes\n", memsize());
     free(p);
     printf("After free: %d bytes\n", memsize());
-    exit(0);
+    exit(0, "");
 }

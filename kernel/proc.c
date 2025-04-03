@@ -344,7 +344,7 @@ reparent(struct proc *p)
 // An exited process remains in the zombie state
 // until its parent calls wait().
 void
-exit(int status)
+exit(int status, char *msg)
 {
   struct proc *p = myproc();
 
@@ -375,6 +375,9 @@ exit(int status)
   
   acquire(&p->lock);
 
+  //We added here the exit message
+  safestrcpy(p->exit_msg, msg, sizeof(p->exit_msg));
+
   p->xstate = status;
   p->state = ZOMBIE;
 
@@ -388,7 +391,7 @@ exit(int status)
 // Wait for a child process to exit and return its pid.
 // Return -1 if this process has no children.
 int
-wait(uint64 addr, char *msg)
+wait(uint64 addr, uint64 msg_addr)
 {
   struct proc *pp;
   int havekids, pid;
@@ -414,12 +417,15 @@ wait(uint64 addr, char *msg)
             release(&wait_lock);
             return -1;
           }
-          // Copy exit message if provided
-          // and if the child has one.
-          if (msg != 0){
-            memmove(msg, pp->exit_msg, sizeof(pp->exit_msg));
+
+          // Copy exit message to user space
+          if (msg_addr != 0 && copyout(p->pagetable, msg_addr, pp->exit_msg,
+                                 sizeof(pp->exit_msg)) < 0) {
+            release(&pp->lock);
+            release(&wait_lock);
+            return -1;
           }
-              
+
           freeproc(pp);
           release(&pp->lock);
           release(&wait_lock);
@@ -686,4 +692,95 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+forkn(int n, int* pids)
+{
+  int i, j;
+  struct proc *children[16];
+  struct proc *np;
+  struct proc *p = myproc();
+
+  // Validate number of processes
+  if(n < 1 || n > 16)
+    return -1;
+
+  // Try to create n children
+  for(i = 0; i < n; i++) {
+    // Allocate process
+    if((np = allocproc()) == 0) {
+      goto cleanup;
+    }
+
+    // Copy user memory from parent to child
+    if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0) {
+      freeproc(np);
+      release(&np->lock);
+      goto cleanup;
+    }
+    np->sz = p->sz;
+
+    // Copy saved user registers
+    *(np->trapframe) = *(p->trapframe);
+
+    // Set return value for child process (1-based index)
+    np->trapframe->a0 = i + 1;
+
+    // Increment reference counts on open file descriptors
+    for(j = 0; j < NOFILE; j++)
+      if(p->ofile[j])
+        np->ofile[j] = filedup(p->ofile[j]);
+    np->cwd = idup(p->cwd);
+
+    safestrcpy(np->name, p->name, sizeof(p->name));
+
+    // Store PID in user-provided array
+    if(copyout(p->pagetable, (uint64)&pids[i], (char*)&np->pid, sizeof(np->pid)) < 0) {
+      freeproc(np);
+      release(&np->lock);
+      goto cleanup;
+    }
+
+    // Store child for potential cleanup
+    children[i] = np;
+    
+    // Release lock but don't make RUNNABLE yet
+    release(&np->lock);
+  }
+
+  // All children created successfully, now set parent and make them runnable
+  for(i = 0; i < n; i++) {
+    np = children[i];
+    
+    // Set parent pointer (protected by wait_lock)
+    acquire(&wait_lock);
+    np->parent = p;
+    release(&wait_lock);
+
+    // Make child runnable
+    acquire(&np->lock);
+    np->state = RUNNABLE;
+    release(&np->lock);
+  }
+
+  return 0;
+
+cleanup:
+  // Clean up any processes we've already created
+  for(j = 0; j < i; j++) {
+    np = children[j];
+    
+    acquire(&np->lock);
+    if(np->state == UNUSED)
+      continue;
+      
+    // Set state to unused
+    np->state = UNUSED;
+    release(&np->lock);
+    
+    // No need to call freeproc again as we didn't set them to RUNNABLE
+  }
+  
+  return -1;
 }

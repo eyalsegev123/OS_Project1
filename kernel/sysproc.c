@@ -15,14 +15,9 @@ sys_exit(void)
   argint(0, &n);
   
   if(argstr(1, msg, 32) < 0)
-    msg[0] = '\0'; // Use empty string if retrieving fails
-    
-  msg[31] = '\0';
-    
-  struct proc *p = myproc();
-  safestrcpy(p->exit_msg, msg, sizeof(p->exit_msg));
-  
-  exit(n);
+    return -1;
+
+  exit(n, msg);
   
   return 0;
 }
@@ -41,45 +36,17 @@ sys_fork(void)
   return fork();
 }
 
-// uint64
-// sys_wait(void)
-// {
-  
-//   uint64 p;
-//   argaddr(0, &p);
-//   return wait(p);
-// }
-
-
 uint64
 sys_wait(void)
 {
-  uint64 status_addr;
+  uint64 p;
   uint64 msg_addr;
 
-  argaddr(0, &status_addr);
+  argaddr(0, &p);
   argaddr(1, &msg_addr);
-    
-  int status;
-  char msg[32];
 
-  int pid = wait(&status, msg);  // This now copies the exit_msg for us
-
-  if (pid < 0)
-    return -1;
-
-  struct proc *p = myproc();
-
-  if (copyout(p->pagetable, status_addr, (char *)&status, sizeof(status)) < 0)
-    return -1;
-
-  if (copyout(p->pagetable, msg_addr, msg, sizeof(msg)) < 0)
-    return -1;
-
-  return pid;
+  return wait(p , msg_addr);
 }
-
-
 
 uint64
 sys_sbrk(void)
@@ -140,4 +107,23 @@ uint64
 sys_memsize(void)
 {
   return myproc()->sz;
+}
+
+uint64
+sys_forkn(void)
+{
+  int n;
+  uint64 pids_addr;
+  
+  argint(0, &n);
+  argaddr(1, &pids_addr);
+    
+  return forkn(n, (int*)pids_addr);
+}
+
+
+sys_waitall(void)
+{
+  uint64 n;
+  uint64 statuses;
 }
