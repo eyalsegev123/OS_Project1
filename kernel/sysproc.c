@@ -121,7 +121,7 @@ sys_forkn(void)
   return forkn(n, (int*)pids_addr);
 }
 
-
+uint64
 sys_waitall(void)
 {
   uint64 n;

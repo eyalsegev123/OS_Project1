@@ -818,8 +818,6 @@ waitall(int *n, int *statuses)
   }
 
   for(;;) {
-    // Reset counter for this scan
-    finished_children = 0;
     
     // Scan for zombie children
     for(pp = proc; pp < &proc[NPROC]; pp++) {
@@ -827,13 +825,12 @@ waitall(int *n, int *statuses)
         acquire(&pp->lock);
         if(pp->state == ZOMBIE) {
           // Save exit status
-          temp_statuses[finished_children] = pp->xstate;
+          temp_statuses[finished_children++] = pp->xstate;
           
           // Free the process
           freeproc(pp);
           release(&pp->lock);
-          
-          finished_children++;
+
         } else {
           release(&pp->lock);
         }
@@ -860,7 +857,6 @@ waitall(int *n, int *statuses)
       return 0;
     }
 
-    // Not all children have exited
     if(killed(p)) {
       release(&wait_lock);
       return -1;
@@ -868,43 +864,6 @@ waitall(int *n, int *statuses)
     
     // Wait for children to exit
     sleep(p, &wait_lock);
-  }
-}
-
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
-void
-scheduler(void)
-{
-  struct proc *p;
-  struct cpu *c = mycpu();
-  
-  c->proc = 0;
-  for(;;){
-    // Avoid deadlock by ensuring that devices can interrupt.
-    intr_on();
-
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
-
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-      }
-      release(&p->lock);
-    }
   }
 }
 
